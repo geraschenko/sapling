@@ -44,7 +44,6 @@ where
 
     pub fn with_min_row_height(mut self, min_row_height: usize) -> Self {
         self.options.min_row_height = min_row_height;
-        self.inner.set_min_row_height(min_row_height);
         self
     }
 

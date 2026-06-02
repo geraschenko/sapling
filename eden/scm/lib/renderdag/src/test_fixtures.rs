@@ -35,6 +35,20 @@ pub(crate) const BASIC_DISCONNECTED: TestFixture = TestFixture {
     missing: &[],
 };
 
+pub(crate) const BASIC_DISCONNECTED_WITH_EXTRA_MESSAGES: TestFixture = TestFixture {
+    dag: "A B C-D",
+    messages: &[
+        ("A", "extra"),
+        ("B", "extra"),
+        ("C", "extra"),
+        ("D", "extra"),
+    ],
+    heads: &["A", "B", "D"],
+    reserve: &[],
+    ancestors: &[],
+    missing: &[],
+};
+
 pub(crate) const BRANCHES_AND_MERGES: TestFixture = TestFixture {
     dag: r#"
                       T /---------------N--O---\           T

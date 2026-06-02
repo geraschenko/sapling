@@ -76,6 +76,8 @@ where
     inner: R,
     options: OutputRendererOptions,
     extra_pad_line: Option<String>,
+    extra_pad_line_occupied: Vec<bool>,
+    previous_graph_line_occupied: Vec<bool>,
     glyphs: &'static [&'static str; glyph::COUNT],
     _phantom: PhantomData<N>,
 }
@@ -89,6 +91,8 @@ where
             inner,
             options,
             extra_pad_line: None,
+            extra_pad_line_occupied: Vec::new(),
+            previous_graph_line_occupied: Vec::new(),
             glyphs: &CURVED_GLYPHS,
             _phantom: PhantomData,
         }
@@ -136,14 +140,30 @@ where
         let mut message_lines = pad_lines(line.message.lines(), self.options.min_row_height);
         let mut need_extra_pad_line = false;
 
+        let mut previous_graph_line_occupied = self.previous_graph_line_occupied.clone();
+
         // Render the previous extra pad line
         if let Some(extra_pad_line) = self.extra_pad_line.take() {
-            out.push_str(extra_pad_line.trim_end());
+            let extra_pad_line = extra_pad_line.trim_end();
+            out.push_str(extra_pad_line);
             out.push('\n');
+            previous_graph_line_occupied = std::mem::take(&mut self.extra_pad_line_occupied);
         }
 
-        if line.blank_line_before {
-            out.push('\n');
+        if line.needs_pre_node_separation {
+            if let Some(column) = line
+                .node_line
+                .iter()
+                .position(|entry| *entry == NodeLine::Node)
+            {
+                if previous_graph_line_occupied
+                    .get(column)
+                    .copied()
+                    .unwrap_or(false)
+                {
+                    out.push('\n');
+                }
+            }
         }
 
         // Render the nodeline
@@ -159,6 +179,11 @@ where
                 NodeLine::Blank => node_line.push_str(glyphs[glyph::SPACE]),
             }
         }
+        previous_graph_line_occupied = line
+            .node_line
+            .iter()
+            .map(|entry| *entry != NodeLine::Blank)
+            .collect();
         if let Some(msg) = message_lines.next() {
             node_line.push(' ');
             node_line.push_str(msg);
@@ -244,6 +269,7 @@ where
                     link_line.push_str(glyphs[glyph::SPACE]);
                 }
             }
+            previous_graph_line_occupied = link_row.iter().map(|entry| !entry.is_empty()).collect();
             if let Some(msg) = message_lines.next() {
                 link_line.push(' ');
                 link_line.push_str(msg);
@@ -264,6 +290,11 @@ where
                         term_line.push_str(glyphs[line.pad_lines[i].to_glyph()]);
                     }
                 }
+                previous_graph_line_occupied = term_row
+                    .iter()
+                    .zip(line.pad_lines.iter())
+                    .map(|(term, pad)| *term || *pad != PadLine::Blank)
+                    .collect();
                 if let Some(msg) = message_lines.next() {
                     term_line.push(' ');
                     term_line.push_str(msg);
@@ -275,6 +306,11 @@ where
         }
 
         let mut base_pad_line = String::new();
+        let base_pad_line_occupied: Vec<_> = line
+            .pad_lines
+            .iter()
+            .map(|entry| *entry != PadLine::Blank)
+            .collect();
         for entry in line.pad_lines.iter() {
             base_pad_line.push_str(glyphs[entry.to_glyph()]);
         }
@@ -282,6 +318,7 @@ where
         // Render any pad lines
         for msg in message_lines {
             let mut pad_line = base_pad_line.clone();
+            previous_graph_line_occupied = base_pad_line_occupied.clone();
             pad_line.push(' ');
             pad_line.push_str(msg);
             out.push_str(pad_line.trim_end());
@@ -291,7 +328,10 @@ where
 
         if need_extra_pad_line {
             self.extra_pad_line = Some(base_pad_line);
+            self.extra_pad_line_occupied = base_pad_line_occupied;
         }
+
+        self.previous_graph_line_occupied = previous_graph_line_occupied;
 
         out
     }
@@ -353,6 +393,29 @@ mod tests {
             o  B
             
             o  A"#
+        );
+    }
+
+    #[test]
+    fn basic_disconnected_min_row_height_1_with_extra_messages() {
+        let mut renderer = GraphRowRenderer::new()
+            .output()
+            .with_min_row_height(1)
+            .build_box_drawing();
+        assert_eq!(
+            render_string(
+                &test_fixtures::BASIC_DISCONNECTED_WITH_EXTRA_MESSAGES,
+                &mut renderer,
+            ),
+            r#"
+            o  D
+            │  extra
+            o  C
+               extra
+            o  B
+               extra
+            o  A
+               extra"#
         );
     }
 

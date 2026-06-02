@@ -14,7 +14,6 @@ use serde::Serialize;
 
 use super::column::Column;
 use super::column::ColumnsExt;
-use super::output::DEFAULT_MIN_ROW_HEIGHT;
 use super::output::OutputRendererBuilder;
 
 pub trait Renderer<N> {
@@ -22,9 +21,6 @@ pub trait Renderer<N> {
 
     // Returns the width of the graph line, possibly including another node.
     fn width(&self, new_node: Option<&N>, new_parents: Option<&Vec<Ancestor<N>>>) -> u64;
-
-    // Set the minimum rendered row height.
-    fn set_min_row_height(&mut self, _min_row_height: usize) {}
 
     // Set whether disconnected consecutive nodes should be staggered into
     // different columns instead of separated by a blank line.
@@ -48,13 +44,9 @@ pub trait Renderer<N> {
 /// Converts a sequence of DAG node descriptions into rendered graph rows.
 pub struct GraphRowRenderer<N> {
     columns: Vec<Column<N>>,
-    // The remaining fields only have an effect when min_row_height is 1. With
-    // taller rows, the padding row already distinguishes connected same-column
-    // nodes from disconnected same-column nodes. But when there is no padding
-    // row, we must track what column the previous node is in so that either
-    // vertical or horizontal space can be added to indicate that the next node
-    // is not connected to the previous node.
-    min_row_height: usize,
+    // Track what column the previous node is in so output renderers can
+    // visually separate disconnected same-column nodes, either by adding
+    // vertical space or by staggering them into different columns.
     stagger_disconnected_nodes: bool,
     previous_node_column: Option<usize>,
 }
@@ -316,8 +308,10 @@ pub struct GraphRow<N> {
     /// The pad columns for this row.
     pub pad_lines: Vec<PadLine>,
 
-    /// True if a blank line should be rendered before this row.
-    pub blank_line_before: bool,
+    /// True if this row's node is disconnected from the previous node but
+    /// reuses its graph column. Output renderers should ensure that the two
+    /// nodes are visually separated in that graph column.
+    pub needs_pre_node_separation: bool,
 }
 
 impl<N> GraphRowRenderer<N>
@@ -328,7 +322,6 @@ where
     pub fn new() -> Self {
         GraphRowRenderer {
             columns: Vec::new(),
-            min_row_height: DEFAULT_MIN_ROW_HEIGHT,
             stagger_disconnected_nodes: false,
             previous_node_column: None,
         }
@@ -358,7 +351,7 @@ where
             // space for the node, then adding the new node would create
             // a new column.
             if self.columns.find(node).is_none() {
-                if self.min_row_height == 1 && self.stagger_disconnected_nodes {
+                if self.stagger_disconnected_nodes {
                     if let Some(previous_node_column) = self.previous_node_column {
                         if self.columns.get(previous_node_column) == Some(&Column::Empty) {
                             // Dense stagger mode cannot use the previous node's column for an
@@ -397,10 +390,6 @@ where
         width as u64
     }
 
-    fn set_min_row_height(&mut self, min_row_height: usize) {
-        self.min_row_height = min_row_height;
-    }
-
     fn set_stagger_disconnected_nodes(&mut self, stagger: bool) {
         self.stagger_disconnected_nodes = stagger;
     }
@@ -424,9 +413,9 @@ where
     ) -> GraphRow<N> {
         // Find a column for this node.
         let existing_column = self.columns.find(&node);
-        let mut blank_line_before = false;
+        let mut needs_pre_node_separation = false;
         let column = existing_column.unwrap_or_else(|| {
-            let column = if self.min_row_height == 1 && self.stagger_disconnected_nodes {
+            let column = if self.stagger_disconnected_nodes {
                 if let Some(index) = self.columns.iter().enumerate().find_map(|(index, column)| {
                     (*column == Column::Empty && Some(index) != self.previous_node_column)
                         .then_some(index)
@@ -443,9 +432,8 @@ where
                     .first_empty()
                     .unwrap_or_else(|| self.columns.new_empty())
             };
-            blank_line_before = self.min_row_height == 1
-                && !self.stagger_disconnected_nodes
-                && Some(column) == self.previous_node_column;
+            needs_pre_node_separation =
+                !self.stagger_disconnected_nodes && Some(column) == self.previous_node_column;
             column
         });
         self.columns[column] = Column::Empty;
@@ -607,7 +595,7 @@ where
             link_line,
             term_line,
             pad_lines,
-            blank_line_before,
+            needs_pre_node_separation,
         }
     }
 }
